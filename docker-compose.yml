@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  # 1) Message broker
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - '5672:5672' # AMQP
+      - '15672:15672' # Management UI
+    networks:
+      - quiz-net
+    healthcheck:
+      test: ['CMD', 'rabbitmqctl', 'status']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 2) MySQL database
+  mysql:
+    image: mysql:8.0
+    restart: always
+    environment:
+      MYSQL_DATABASE: quizdb
+      MYSQL_ROOT_PASSWORD: rootpass
+    ports:
+      - '3306:3306'
+    volumes:
+      - mysqldata:/var/lib/mysql
+    networks:
+      - quiz-net
+    healthcheck:
+      test: ['CMD-SHELL', 'mysqladmin ping -h localhost -prootpass']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 3) NestJS App
+  app:
+    build:
+      context: . # assumes Dockerfile is at repo root
+      args:
+        DATABASE_URL: ${DATABASE_URL}
+    ports:
+      - '3002:3002' # host:container
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    networks:
+      - quiz-net
+    environment:
+      DB_HOST: mysql
+      DB_PORT: '3306'
+      DB_USERNAME: root
+      DB_PASSWORD: rootpass
+      MYSQL_ROOT_PASSWORD: rootpass
+      DB_NAME: quizdb
+
+      OPENAI_KEY: ${OPENAI_KEY}
+      HF_API_KEY: ${HF_API_KEY}
+
+      # ? Make sure Prisma client can connect
+      DATABASE_URL: ${DATABASE_URL_DOCKER}
+      PORT: '3002'
+    command: sh -c "npx prisma migrate deploy && node dist/main.js"
+    volumes:
+      - ./public:/app/public # ? this is what you need
+
+networks:
+  quiz-net:
+    driver: bridge
+
+volumes:
+  mysqldata:
